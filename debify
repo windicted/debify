@@ -1,0 +1,128 @@
+#!/usr/bin/env node
+
+"use strict";
+
+const fs = require("fs");
+const fsm = require("fs-minipass");
+const path = require("path");
+const tmp = require("tmp");
+const klaw = require("klaw-sync");
+const md5 = require("md5");
+const tar = require("tar");
+
+if (process.argv.length !== 4 || process.argv.find((arg => arg === "--help"))) {
+    console.error("Usage: debify <DATA_DIRECTORY> <CONTROL_DIRECTORY>");
+    console.error("");
+    console.error("This utility creates a DEB-package using contents of DATA_DIRECTORY and metadata from CONTROL_DIRECTORY");
+    console.error("which must at least contain a well-formed 'control' file. All other standard control files (such as");
+    console.error("conffiles, postinst, postrm, preinst and prerm) will be used as well if present. The result DEB-package");
+    console.error("is placed into current working directory and its name is up to the contents of the 'control' file.");
+    process.exit(1);
+}
+
+const DATA_DIRECTORY = process.argv[2];
+const CONTROL_DIRECTORY = process.argv[3];
+const CONTROL_FILE = CONTROL_DIRECTORY + "/control";
+
+// Make sure the package data directory exists
+if (!fs.existsSync(DATA_DIRECTORY)) {
+    console.error("Package data directory ('" + DATA_DIRECTORY + "') doesn't exist");
+    process.exit(2);
+}
+
+// Make sure the package control directory exists
+if (!fs.existsSync(CONTROL_DIRECTORY)) {
+    console.error("Package control directory ('" + CONTROL_DIRECTORY + "') doesn't exist");
+    process.exit(2);
+}
+
+// Make sure there is at least a file named 'control' in the package control directory
+if (!fs.existsSync(CONTROL_FILE)) {
+    console.error("Package control file '" + CONTROL_DIRECTORY + "/control' doesn't exist");
+    process.exit(2);
+}
+
+const control = new Map(fs.readFileSync(CONTROL_FILE, { encoding: "utf8" }).replace(/\n\s+/g, " ").split("\n").map(field => field.replace(/\s*:\s*/, ":").split(":", 2)));
+[ "Package", "Version", "Architecture", "Maintainer", "Description"].forEach((fieldName) => {
+    if (!control.has(fieldName)) {
+        console.error("Field '" + fieldName + "' is missing in package control file ('" + CONTROL_FILE + "')");
+        process.exit(2);
+    }
+});
+
+// Create temporary directories
+const TEMPORARY_DIRECTORY = tmp.dirSync().name;
+const TEMPORARY_DEBIAN_BINARY_FILE = TEMPORARY_DIRECTORY + "/debian-binary";
+const TEMPORARY_DATA_TAR_GZ_FILE = TEMPORARY_DIRECTORY + "/data.tar.gz";
+const TEMPORARY_CONTROL_DIRECTORY = TEMPORARY_DIRECTORY + "/control";
+const TEMPORARY_CONTROL_FILE = TEMPORARY_CONTROL_DIRECTORY + "/control";
+const TEMPORARY_MD5SUMS_FILE = TEMPORARY_CONTROL_DIRECTORY + "/md5sums";
+const TEMPORARY_CONTROL_TAR_GZ_FILE = TEMPORARY_DIRECTORY + "/control.tar.gz";
+
+// Create temporary 'data.tar.gz'
+tar.create({
+    file: TEMPORARY_DATA_TAR_GZ_FILE,
+    sync: true,
+    gzip: true,
+    portable: true,
+    cwd: DATA_DIRECTORY
+}, ["."]);
+
+// Create temporary 'control.tar.gz'
+fs.mkdirSync(TEMPORARY_CONTROL_DIRECTORY);
+fs.readdirSync(CONTROL_DIRECTORY).filter(item => item.match("^(conffiles|postinst|postrm|preinst|prerm)$")).forEach(filename => {
+    fs.copyFileSync(CONTROL_DIRECTORY + "/" + filename, TEMPORARY_CONTROL_DIRECTORY + "/" + filename);
+    let mode = filename.match("^(postinst|postrm|preinst|prerm)$") ? 0o755 : 0o644;
+    fs.chmodSync(TEMPORARY_CONTROL_DIRECTORY + "/" + filename, mode);
+});
+const controlFileStream = new fsm.WriteStreamSync(TEMPORARY_CONTROL_FILE, { flags: "w" });
+control.forEach((fieldValue, fieldName) => {
+    if (fieldName) {
+        controlFileStream.write(fieldName + ": " + fieldValue + "\n");
+    }
+});
+controlFileStream.end();
+const md5sumsFileStream = new fsm.WriteStreamSync(TEMPORARY_MD5SUMS_FILE, { flags: "w" });
+klaw(DATA_DIRECTORY).forEach((file) => {
+    if (file.stats.isFile()) {
+        const fileContent = fs.readFileSync(file.path);
+        md5sumsFileStream.write(md5(fileContent) + "  " + path.relative(DATA_DIRECTORY, file.path) + "\n");
+    }
+});
+md5sumsFileStream.end();
+tar.create({
+    file: TEMPORARY_CONTROL_TAR_GZ_FILE,
+    sync: true,
+    gzip: true,
+    portable: true,
+    cwd: TEMPORARY_CONTROL_DIRECTORY
+}, ["."]);
+
+// Create temporary 'debian-binary'
+fs.writeFileSync(TEMPORARY_DEBIAN_BINARY_FILE, "2.0\n");
+
+// Create DEB-package
+const debFileName = control.get("Package") + "_" + control.get("Version") + "-" + control.get("Architecture") + ".deb";
+const debFileStream = new fsm.WriteStreamSync(debFileName, { flags: "w", encoding: "binary" });
+debFileStream.write("!<arch>" + String.fromCharCode(0x0A)); // Signature
+[TEMPORARY_DEBIAN_BINARY_FILE, TEMPORARY_CONTROL_TAR_GZ_FILE, TEMPORARY_DATA_TAR_GZ_FILE].forEach((filename, index) => {
+    let fileStats = fs.lstatSync(filename);
+    let fileContents = fs.readFileSync(filename);
+    debFileStream.write(rightPaddedWithSpaces(16, path.basename(filename)));  // Filename (ASCII, 16 bytes long)
+    debFileStream.write(rightPaddedWithSpaces(12, (fileStats.mtime / 1000).toString())); // File modification timestamp (Decimal, 12 bytes long)
+    debFileStream.write(rightPaddedWithSpaces(6, "0")); // Owner ID (Decimal, 6 bytes long)
+    debFileStream.write(rightPaddedWithSpaces(6, "0")); // Group ID (Decimal, 6 bytes long)
+    debFileStream.write(rightPaddedWithSpaces(8, "100644")); // File mode (Octal, 8 bytes long)
+    debFileStream.write(rightPaddedWithSpaces(10, fileStats.size.toString())); // File size in bytes (Decimal, 10 bytes long)
+    debFileStream.write(String.fromCharCode(0x60) + String.fromCharCode(0x0A)); // Ending characters ("0x60 0x0A")
+    debFileStream.write(fileContents);
+    // If the data for an archive member ends at an odd byte offset, then a padding byte with value 0x0A is used to position the next archive header on an even byte offset.
+    if (fileStats.size % 2 === 1 && index !== 2) {
+        debFileStream.write(String.fromCharCode(0x0A));
+    }
+});
+debFileStream.end();
+
+function rightPaddedWithSpaces(n, string) {
+    return string + Array(n - string.length + 1).join(String.fromCharCode(0x20));
+}

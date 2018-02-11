@@ -1,0 +1,27 @@
+{
+    "name": "debify",
+    "version": "1.0.0",
+    "license": "ISC",
+    "description": "Cross-platform utility for creating DEB-packages",
+    "author": "windicted",
+    "keywords": [
+        "deb",
+        "debian",
+        "ubuntu",
+        "dpkg",
+        "dpkg-deb",
+        "debuild"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/windicted/debify.git"
+    },
+    "bin": "./debify",
+    "dependencies": {
+        "fs-minipass": "^1.2.5",
+        "klaw-sync": "^3.0.2",
+        "md5": "^2.2.1",
+        "tar": "^4.3.2",
+        "tmp": "0.0.33"
+    }
+}
