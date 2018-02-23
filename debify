@@ -75,6 +75,17 @@ fs.readdirSync(CONTROL_DIRECTORY).filter(item => item.match("^(conffiles|postins
     let mode = filename.match("^(postinst|postrm|preinst|prerm)$") ? 0o755 : 0o644;
     fs.chmodSync(TEMPORARY_CONTROL_DIRECTORY + "/" + filename, mode);
 });
+let dataDirectorySize = 0;
+const md5sumsFileStream = new fsm.WriteStreamSync(TEMPORARY_MD5SUMS_FILE, { flags: "w" });
+klaw(DATA_DIRECTORY).forEach((file) => {
+    if (file.stats.isFile()) {
+        dataDirectorySize += file.stats.size;
+        const fileContent = fs.readFileSync(file.path);
+        md5sumsFileStream.write(md5(fileContent) + "  " + path.relative(DATA_DIRECTORY, file.path) + "\n");
+    }
+});
+md5sumsFileStream.end();
+control.set("Installed-Size", Math.floor(dataDirectorySize / 1024).toString());
 const controlFileStream = new fsm.WriteStreamSync(TEMPORARY_CONTROL_FILE, { flags: "w" });
 control.forEach((fieldValue, fieldName) => {
     if (fieldName) {
@@ -82,14 +93,6 @@ control.forEach((fieldValue, fieldName) => {
     }
 });
 controlFileStream.end();
-const md5sumsFileStream = new fsm.WriteStreamSync(TEMPORARY_MD5SUMS_FILE, { flags: "w" });
-klaw(DATA_DIRECTORY).forEach((file) => {
-    if (file.stats.isFile()) {
-        const fileContent = fs.readFileSync(file.path);
-        md5sumsFileStream.write(md5(fileContent) + "  " + path.relative(DATA_DIRECTORY, file.path) + "\n");
-    }
-});
-md5sumsFileStream.end();
 tar.create({
     file: TEMPORARY_CONTROL_TAR_GZ_FILE,
     sync: true,
