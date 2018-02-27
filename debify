@@ -112,7 +112,7 @@ debFileStream.write("!<arch>" + String.fromCharCode(0x0A)); // Signature
     let fileStats = fs.lstatSync(filename);
     let fileContents = fs.readFileSync(filename);
     debFileStream.write(rightPaddedWithSpaces(16, path.basename(filename)));  // Filename (ASCII, 16 bytes long)
-    debFileStream.write(rightPaddedWithSpaces(12, (fileStats.mtime / 1000).toString())); // File modification timestamp (Decimal, 12 bytes long)
+    debFileStream.write(rightPaddedWithSpaces(12, (Math.floor(fileStats.mtime / 1000)).toString())); // File modification timestamp (Decimal, 12 bytes long)
     debFileStream.write(rightPaddedWithSpaces(6, "0")); // Owner ID (Decimal, 6 bytes long)
     debFileStream.write(rightPaddedWithSpaces(6, "0")); // Group ID (Decimal, 6 bytes long)
     debFileStream.write(rightPaddedWithSpaces(8, "100644")); // File mode (Octal, 8 bytes long)
