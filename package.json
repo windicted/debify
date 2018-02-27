@@ -1,6 +1,6 @@
 {
     "name": "debify",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "license": "ISC",
     "description": "Cross-platform utility for creating DEB-packages",
     "author": "windicted",
