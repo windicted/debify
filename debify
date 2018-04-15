@@ -9,6 +9,7 @@ const tmp = require("tmp");
 const klaw = require("klaw-sync");
 const md5 = require("md5");
 const tar = require("tar");
+const resolveEnv = require("resolve-env");
 
 if (process.argv.length !== 4 || process.argv.find((arg => arg === "--help"))) {
     console.error("Usage: debify <DATA_DIRECTORY> <CONTROL_DIRECTORY>");
@@ -42,7 +43,7 @@ if (!fs.existsSync(CONTROL_FILE)) {
     process.exit(2);
 }
 
-const control = new Map(fs.readFileSync(CONTROL_FILE, { encoding: "utf8" }).replace(/\n\s+/g, " ").split("\n").map(field => field.replace(/\s*:\s*/, ":").split(":", 2)));
+const control = new Map(resolveEnv(fs.readFileSync(CONTROL_FILE, { encoding: "utf8" })).replace(/\n\s+/g, " ").split("\n").map(field => field.replace(/\s*:\s*/, ":").split(":", 2)));
 [ "Package", "Version", "Architecture", "Maintainer", "Description"].forEach((fieldName) => {
     if (!control.has(fieldName)) {
         console.error("Field '" + fieldName + "' is missing in package control file ('" + CONTROL_FILE + "')");
